@@ -1,0 +1,29 @@
+[Unit]
+
+Description=Voicebox Backend
+
+After=network.target
+
+[Service]
+
+Type=simple
+
+User=argus
+
+WorkingDirectory=/ai_backends/audio/voicebox
+
+Environment=PATH=/home/argus/.nvm/versions/node/v24.15.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+ExecStart=/home/argus/.nvm/versions/node/v24.15.0/bin/just dev-backend
+
+Restart=always
+
+RestartSec=5
+
+StandardOutput=journal
+
+StandardError=journal
+
+[Install]
+
+WantedBy=multi-user.target

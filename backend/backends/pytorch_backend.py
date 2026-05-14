@@ -28,6 +28,7 @@ class PyTorchTTSBackend:
 
     def __init__(self, model_size: str = "1.7B"):
         self.model = None
+        self.fast_model = None
         self.model_size = model_size
         self.device = self._get_device()
         self._current_model_size = None
@@ -113,12 +114,56 @@ class PyTorchTTSBackend:
                     low_cpu_mem_usage=False,
                 )
             else:
-                self.model = Qwen3TTSModel.from_pretrained(
+                from qwen_tts import Qwen3TTSModel
+                from faster_qwen3_tts import FasterQwen3TTS
+                from faster_qwen3_tts.predictor_graph import PredictorGraph
+                from faster_qwen3_tts.talker_graph import TalkerGraph
+
+                # Load base model using qwen-tts library
+                base_model = Qwen3TTSModel.from_pretrained(
                     model_path,
                     cache_dir=tts_cache_dir,
                     device_map=self.device,
                     torch_dtype=torch.bfloat16,
                 )
+
+                talker = base_model.model.talker
+                talker_config = base_model.model.config.talker_config
+
+                # Extract predictor config from loaded model
+                predictor = talker.code_predictor
+                pred_config = predictor.model.config
+                talker_hidden = talker_config.hidden_size
+
+                # Build CUDA graphs
+                predictor_graph = PredictorGraph(
+                    predictor,
+                    pred_config,
+                    talker_hidden,
+                    device=self.device,
+                    dtype=torch.bfloat16,
+                    do_sample=True,
+                    top_k=50,
+                    temperature=0.9,
+                )
+
+                talker_graph = TalkerGraph(
+                    talker.model,
+                    talker_config,
+                    device=self.device,
+                    dtype=torch.bfloat16,
+                    max_seq_len=2048,
+                )
+
+                self.model = base_model
+                self.fast_model = FasterQwen3TTS(
+                    base_model=base_model,
+                    predictor_graph=predictor_graph,
+                    talker_graph=talker_graph,
+                    device=self.device,
+                    dtype=torch.bfloat16,
+                    max_seq_len=2048,
+              )
 
         self._current_model_size = model_size
         self.model_size = model_size
@@ -128,7 +173,9 @@ class PyTorchTTSBackend:
         """Unload the model to free memory."""
         if self.model is not None:
             del self.model
+            del self.fast_model
             self.model = None
+            self.fast_model = None
             self._current_model_size = None
 
             empty_device_cache(self.device)
@@ -231,12 +278,21 @@ class PyTorchTTSBackend:
 
             # See _create_prompt_sync comment — inference runs with the
             # process's default HF_HUB_OFFLINE state (issue #462).
-            wavs, sample_rate = self.model.generate_voice_clone(
-                text=text,
-                voice_clone_prompt=voice_prompt,
-                language=LANGUAGE_CODE_TO_NAME.get(language, "auto"),
-                instruct=instruct,
-            )
+
+            if self.fast_model == None:
+                wavs, sample_rate = self.model.generate_voice_clone(
+                    text=text,
+                    voice_clone_prompt=voice_prompt,
+                    language=LANGUAGE_CODE_TO_NAME.get(language, "auto"),
+                    instruct=instruct,
+                )
+            else:
+                wavs, sample_rate = self.fast_model.generate_voice_clone(
+                    text=text,
+                    voice_clone_prompt=voice_prompt,
+                    language=LANGUAGE_CODE_TO_NAME.get(language, "auto"),
+                    instruct=instruct,
+                )
             return wavs[0], sample_rate
 
         # Run blocking inference in thread pool to avoid blocking event loop
