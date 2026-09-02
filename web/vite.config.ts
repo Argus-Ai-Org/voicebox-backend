@@ -9,7 +9,18 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '../app/src'),
+      // web/ and app/ each ship their own node_modules; alias to one copy
+      // or the prod bundle duplicates react-query's context.
+      react: path.resolve(__dirname, '../app/node_modules/react'),
+      'react-dom': path.resolve(__dirname, '../app/node_modules/react-dom'),
+      '@tanstack/react-query': path.resolve(__dirname, '../app/node_modules/@tanstack/react-query'),
+      '@tanstack/react-query-devtools': path.resolve(
+        __dirname,
+        '../app/node_modules/@tanstack/react-query-devtools',
+      ),
+      zustand: path.resolve(__dirname, '../app/node_modules/zustand'),
     },
+    dedupe: ['react', 'react-dom', '@tanstack/react-query', 'zustand'],
   },
   build: {
     outDir: 'dist',
