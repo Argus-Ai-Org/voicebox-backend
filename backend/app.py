@@ -205,7 +205,7 @@ def _mount_frontend(application: FastAPI) -> None:
     the React SPA handles client-side routing.  In dev or API-only mode the
     directory is absent and this function is a no-op.
     """
-    frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+    frontend_dir = Path(__file__).resolve().parent.parent / "web" / "dist"
     if not frontend_dir.is_dir():
         return
 
