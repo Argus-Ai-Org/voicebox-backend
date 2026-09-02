@@ -21,19 +21,21 @@ if _custom_models_dir:
 # Default data directory (used in development)
 _data_dir = Path("data").resolve()
 
+# Subdirectories of the data dir that we persist as relative paths.
+_STORAGE_ROOTS = frozenset({"profiles", "generations", "captures", "cache", "models"})
 
-def _path_relative_to_any_data_dir(path: Path) -> Path | None:
-    """Extract the path within a data dir from an absolute or relative path."""
+
+def _strip_to_storage_root(path: Path) -> Path | None:
+    """Return the path from the first known storage subdirectory onward.
+
+    Used to rebase paths after a data-dir move, and to repair rows written
+    by the old heuristic that treated any ``data`` path component (including
+    the FHS ``/data`` mount) as the Voicebox data directory.
+    """
     parts = path.parts
     for idx, part in enumerate(parts):
-        if part != "data":
-            continue
-
-        tail = parts[idx + 1 :]
-        if tail:
-            return Path(*tail)
-        return Path()
-
+        if part in _STORAGE_ROOTS:
+            return Path(*parts[idx:])
     return None
 
 
@@ -64,14 +66,16 @@ def to_storage_path(path: str | Path) -> str:
     """Convert a filesystem path to a DB-safe path relative to the data dir."""
     resolved_path = Path(path).resolve()
 
-    relative_to_any_data_dir = _path_relative_to_any_data_dir(resolved_path)
-    if relative_to_any_data_dir is not None:
-        return str(relative_to_any_data_dir)
-
     try:
         return str(resolved_path.relative_to(_data_dir))
     except ValueError:
-        return str(resolved_path)
+        pass
+
+    stripped = _strip_to_storage_root(resolved_path)
+    if stripped is not None:
+        return str(stripped)
+
+    return str(resolved_path)
 
 
 def resolve_storage_path(path: str | Path | None) -> Path | None:
@@ -86,7 +90,7 @@ def resolve_storage_path(path: str | Path | None) -> Path | None:
     if not stored_path.parts:
         return None
     if stored_path.is_absolute():
-        rebased_path = _path_relative_to_any_data_dir(stored_path)
+        rebased_path = _strip_to_storage_root(stored_path)
         if rebased_path is not None:
             candidate = (_data_dir / rebased_path).resolve()
             if candidate.exists() or not stored_path.exists():
@@ -101,8 +105,16 @@ def resolve_storage_path(path: str | Path | None) -> Path | None:
         stored_path = (
             Path(*stored_path.parts[1:]) if len(stored_path.parts) > 1 else Path()
         )
+        if not stored_path.parts:
+            return None
 
-    return (_data_dir / stored_path).resolve()
+    naive = (_data_dir / stored_path).resolve()
+    stripped = _strip_to_storage_root(stored_path)
+    if stripped is not None and stripped != stored_path:
+        candidate = (_data_dir / stripped).resolve()
+        if candidate.exists() or not naive.exists():
+            return candidate
+    return naive
 
 
 def get_db_path() -> Path:
